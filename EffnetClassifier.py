@@ -39,14 +39,20 @@ class EffnetClassifier:
         'efficientnet_b7': 600,
     }
 
-    def __init__(self, model_name='efficientnet_b0'):
+    def __init__(self, model_name='efficientnet_b0',num_classes=2):
         self.model_name = model_name
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model = self._load_efficientnet_model(model_name)
         self.dataloaders = {}
         self.dataset_sizes = {}
-        self.class_names = ['Bad', 'Ok']
-        self.num_classes = len(self.class_names)
+        # self.class_names = ['Bad', 'Ok']
+        self.class_names = []
+        if num_classes:
+            self.set_num_classes(num_classes)
+        else:
+            self.num_classes = None
+        # self.num_classes = len(self.class_names)
+        # self.set_num_classes(num_classes)
 
     def _load_efficientnet_model(self, model_name):
         if not hasattr(models, model_name):
@@ -93,7 +99,7 @@ class EffnetClassifier:
             for split in ['train', 'val', 'test']
         }
         dataloaders = {
-            split: DataLoader(image_datasets[split], batch_size=batch_size, shuffle=False, num_workers=num_workers)
+            split: DataLoader(image_datasets[split], batch_size=batch_size, shuffle=(split == 'train'), num_workers=num_workers)
             for split in ['train', 'val', 'test']
         }
         dataset_sizes = {split: len(image_datasets[split]) for split in ['train', 'val', 'test']}
@@ -102,9 +108,9 @@ class EffnetClassifier:
             dataloaders['all'] = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers)
         self.dataloaders = dataloaders
         self.dataset_sizes = dataset_sizes
-        # self.class_names = image_datasets['train'].classes
-        # if self.num_classes is None:
-        #     self.set_num_classes(len(self.class_names))
+        self.class_names = image_datasets['train'].classes
+        if self.num_classes is None:
+            self.set_num_classes(len(self.class_names))
         return dataloaders, dataset_sizes
 
 
@@ -118,6 +124,8 @@ class EffnetClassifier:
         criterion = nn.CrossEntropyLoss()
         self._freeze_all_layers()
         self._unfreeze_classifier()
+        # in_features = self.model.classifier[1].in_features
+        # self.model.classifier[1] = nn.Linear(in_features, self.num_classes).to(self.device)
         optimizer = optim.Adam(self.model.classifier.parameters(), lr=learning_rate_stage1)
         self.model = self.model.to(self.device)
         self.model.train()
@@ -303,13 +311,13 @@ class EffnetClassifier:
         }, path)
         print(f'Model saved to {path}')
 
-    # @classmethod
-    def load_model_old(cls, path='effnet_classifier.pth', device=None):
+    @classmethod
+    def load_model_old(cls, path='effnet_classifier.pth', device="cuda"):
         checkpoint = torch.load(path, map_location=device)
         model_name = checkpoint['model_name']
         num_classes = checkpoint['num_classes']
         class_names = checkpoint['class_names']
-        model = cls(model_name=model_name, num_classes=num_classes, device=device)
+        model = cls(model_name=model_name, num_classes=num_classes)
         model.model.load_state_dict(checkpoint['state_dict'])
         model.class_names = class_names
         model.model = model.model.to(device)
@@ -318,21 +326,10 @@ class EffnetClassifier:
         return model
 
     def load_model(self, path='effnet_classifier.pth'):
-        import torchvision
-        weights = (
-            torchvision.models.EfficientNet_B0_Weights.DEFAULT
-        )
+
         checkpoint = torch.load(path, map_location=self.device)
-        model = torchvision.models.efficientnet_b0(weights=weights).to(self.device)
-        output_shape = len(self.class_names)
-        model.classifier = torch.nn.Sequential(
-            torch.nn.Dropout(p=0.2, inplace=True),
-            torch.nn.Linear(
-                in_features=1280,
-                out_features=output_shape,  # same number of output units as our number of classes
-                bias=True,
-            ),
-        ).to(self.device)
+
+        model = self.model
         model.load_state_dict(checkpoint['state_dict'])
         self.model = model.to(self.device)
         self.model.eval()
